@@ -62,7 +62,7 @@ def piDiscovery() {
     //Populate the preferences page with found devices
     def devicesForDialog = getDevicesForDialog()
     if (devicesForDialog != [:]) {
-    	refreshInterval = 100
+    	refreshInterval = 10
     }
     
     return dynamicPage(name:"piDiscovery", title:"Server Discovery", nextPage:"switchDiscovery", refreshInterval: refreshInterval, uninstall: true) {
@@ -85,7 +85,7 @@ def switchDiscovery() {
     def picoOptions = picosDiscovered()
     discoverLutronDevices()
     if (switchOptions != [:]) {
-    	refreshInterval = 60
+    	refreshInterval = 10
     }
     
     return dynamicPage(name:"switchDiscovery", title:"Switch Discovery", nextPage:"sceneDiscovery", refreshInterval: refreshInterval, uninstall: true) {
@@ -534,7 +534,8 @@ def parse(description) {
     if (description['device']) {
    		def button = description['button']
         def device = description['device']
-   		log.debug "Device ${device} was used"
+        def action = description['action']
+   		
         def deviceType
         
         children.each { child ->
@@ -561,8 +562,9 @@ def parse(description) {
                    case "6": button = 5
                     		break
                 }
-                log.debug "Button ${button} was pressed"
-       	    	sendEvent(dni, [name: "button", value: "pushed", data: [buttonNumber: button], descriptionText: "button $button was pushed", isStateChange: true])
+                log.debug "Button ${button} was ${action} on Pico ${device}"
+       	    	//sendEvent(dni, [name: "button", value: "pushed", data: [buttonNumber: button], descriptionText: "button $button was pushed", isStateChange: true])
+                sendEvent(dni, [name: "button", value: action, data: [buttonNumber: button, action: action], descriptionText: "button $button was pushed", isStateChange: true])
             } else if (deviceType == "Pico2Button") {
             	if (button == "2") {
                   button = 1
