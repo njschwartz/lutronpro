@@ -35,8 +35,8 @@ var buttonMethods = [
 
 var buttonMethods = [
 	{device: '3',
-	4: true;,
-	5: true;
+	4: true,
+	5: true
 	}
 ];
 
