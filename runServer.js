@@ -1,4 +1,4 @@
-var lutronpro = require('./nodetest.js');
+var lutronpro = require('lutronpro');
 
 //Enter your Bridge IP Addresses
 var SMARTBRIDGE_IP = '192.168.1.47';
