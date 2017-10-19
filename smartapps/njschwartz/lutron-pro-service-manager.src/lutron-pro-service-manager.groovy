@@ -16,6 +16,8 @@
  *
  */
 import groovy.json.JsonSlurper
+import groovy.json.JsonBuilder
+import org.json.JSONObject
 
 definition(
 		name: "Lutron Pro Service Manager",
@@ -79,6 +81,7 @@ void ssdpDiscover() {
 //Preferences page to add Lutron Caseta Devices
 def switchDiscovery() {
     def refreshInterval = 10
+    //log.debug selectedSwitches
     
     //Populate the preferences page with found devices
     def switchOptions = switchesDiscovered()
@@ -89,14 +92,15 @@ def switchDiscovery() {
     }
     
     return dynamicPage(name:"switchDiscovery", title:"Switch Discovery", nextPage:"sceneDiscovery", refreshInterval: refreshInterval, uninstall: true) {
-        '''
+        
         section("Switches") {
             input "selectedSwitches", "enum", required:false, title:"Select Switches \n(${switchOptions.size() ?: 0} found)", multiple:true, options:switchOptions, image: "https://cdn.rawgit.com/njschwartz/Lutron-Smart-Pi/master/resources/images/LutronCasetaSwitch.png"
         }
-		'''
+		
         section("Pico's") {
             input "selectedPicos", "enum", required:false, title:"Select Pico's \n(${picoOptions.size() ?: 0} found)", multiple:true, options:picoOptions, image: "https://cdn.rawgit.com/njschwartz/Lutron-Smart-Pi/master/resources/images/LutronCasetaPico.png"
         }
+        
         section {
         	paragraph "Please note that if you do not have a Pro Hub you cannot use your Pico's to control devices in ST and thus you should ignore this section. Selecting Picos with a standard hub will simply add a useless device into ST."
    		 }
@@ -105,7 +109,6 @@ def switchDiscovery() {
 
 def sceneDiscovery() {
     def refreshInterval = 5
-    
 	//Populate the preferences page with found devices
     def sceneOptions = scenesDiscovered()
     discoverScenes()
@@ -156,7 +159,7 @@ Map switchesDiscovered() {
 	if (switches instanceof java.util.Map) {
 		switches.each {
 			def value = "${it.value.name}"
-			def key = it.value.id
+			def key = it.value.dni
 			devicemap["${key}"] = value
 		}
 	}
@@ -256,43 +259,47 @@ def discoverScenes() {
 
 
 def sceneHandler(physicalgraph.device.HubResponse hubResponse) {
-	def body = hubResponse.json
+	log.debug 'in the scene handerl'
+    def body = hubResponse.json
     if (body != null) {
+    	log.debug body
         def scenes = getScenes()
-        def sceneList = body['Body']['VirtualButtons']
-        sceneList.each { k ->
+        body.each { k ->
         	def virtButtonNum 
             if(k.IsProgrammed == true) {
             	virtButtonNum = k.href.substring(15)
             	scenes[k.href] = [id: k.href, name: k.Name, virtualButton: virtButtonNum, dni: k.href, hub: hubResponse.hubId]
             }
         }
+        log.debug scenes
     }
+    
 }
 
 //Handle device list request response from raspberry pi
 def lutronHandler(physicalgraph.device.HubResponse hubResponse) {
+    def slurper = new groovy.json.JsonSlurper()
     def body = hubResponse.json
     log.debug body
     
     if (body != null) {
         def switches = getSwitches()
         switches.clear()
-        def deviceList = body['Body']['Devices']
-		
+        def deviceList = body['Devices']
         body.each { k ->
             log.debug(k.Name)
            
-            if(k.ID && k.DeviceType == "WallDimmer" || k.DeviceType == "PlugInDimmer" || k.DeviceType == "WallSwitch") {
-                switches[k.SerialNumber] = [name: k.Name, deviceID: k.ID, zone: k.LocalZones[0].href.substring(6), dni: k.SerialNumber, hub: hubResponse.hubId, deviceType: k.DeviceType]
-                log.debug switches
+            if(k.DeviceType == "WallDimmer" || k.DeviceType == "PlugInDimmer" || k.DeviceType == "WallSwitch") {
+                switches[k.SerialNumber] = [name: k.Name, deviceID: k.ID, zone: k.LocalZones[0].href.substring(6), dni: k.SerialNumber, hub: hubResponse.hubId, hubIP: k.HubIP, deviceType: k.DeviceType]
+                //log.debug switches
             } else if (k.DeviceType == "Pico3ButtonRaiseLower" || k.DeviceType == "Pico2Button") {
-            	picos[k.SerialNumber] = [name: k.Name , deviceID: k.ID , dni: k.SerialNumber, hub: hubResponse.hubId, deviceType: k.DeviceType]
-                log.debug picos
+            	picos[k.SerialNumber] = [name: k.Name , deviceID: k.ID , dni: k.SerialNumber, hub: hubResponse.hubId, hubIP: k.HubIP, deviceType: k.DeviceType]
+                //log.debug picos
             }
       
         }
     }
+    
 }
 
 /* Generate the list of devices for the preferences dialog */
@@ -329,6 +336,7 @@ def initialize() {
     unsubscribe()
     
     log.debug ('Initializing')
+    log.debug "did I selected a switch " + selectedSwitches
     
     def selectedDevices = selectedRPi
     if (selectedSwitches != null) {
@@ -388,10 +396,11 @@ def addSwitches() {
 
 	selectedSwitches.each { id ->
     	def allSwitches = getSwitches()
-        log.debug allSwitches
+        log.debug "Selected switch is " + selectedSwitches
         def name = allSwitches[id].name
+        def hubIP = allSwitches[id].hubIP
         def zone = allSwitches[id].zone
-        def device = allSwitches[id].device
+        def deviceID = allSwitches[id].deviceID
         def deviceType = allSwitches[id].deviceType
         log.debug "Device is: " + device
   
@@ -413,8 +422,9 @@ def addSwitches() {
                     "data": [
                         "dni": "${dni}",
                         "zone": "${zone}" ,
-                        "device": "${device}",
-                        "deviceType": "${deviceType}"
+                        "deviceID": "${deviceID}",
+                        "deviceType": "${deviceType}",
+                        "hubIP": "${hubIP}"
                     ]
                 ])
                 d.refresh()
@@ -529,58 +539,12 @@ def addScenes() {
 def parse(description) {
     def dni
     def children = getAllChildDevices()
-    log.debug(description)
     
-    if (description['device']) {
-   		def button = description['button']
-        def device = description['device']
-        def action = description['action']
-   		
-        def deviceType
-        
-        children.each { child ->
-        	if (child.getDataValue("device".toString()) == device.toString()) {
-            	log.debug  "Matched"
-        		dni = child.getDataValue("dni".toString())
-                deviceType = child.getDataValue("deviceType".toString())
-     		}	
-        }
-        log.debug dni
-        if (dni != Null) {
-        	if (deviceType == "Pico3ButtonRaiseLower") {
-            	
-            	
-                switch (button) {
-            	   case "2": button = 1
-                    		break
-                   case "3": button = 3
-                    		break
-                   case "4": button = 2
-                    		break
-                   case "5": button = 4
-                    		break
-                   case "6": button = 5
-                    		break
-                }
-                log.debug "Button ${button} was ${action} on Pico ${device}"
-       	    	//sendEvent(dni, [name: "button", value: "pushed", data: [buttonNumber: button], descriptionText: "button $button was pushed", isStateChange: true])
-                sendEvent(dni, [name: "button", value: action, data: [buttonNumber: button, action: action], descriptionText: "button $button was pushed", isStateChange: true])
-            } else if (deviceType == "Pico2Button") {
-            	if (button == "2") {
-                  button = 1
-                } else {
-                  button = 2
-                }
-                log.debug "Button ${button} was pressed"
-                sendEvent(dni, [name: "button", value: "pushed", data: [buttonNumber: button], descriptionText: "button $button was pushed", isStateChange: true])
-            }
-        }
-        return ""
-    }
-    
-    
-    if(description['Body']['Device']) {
-    
+    if (description['Body']) {
+    	log.debug('the desciption is ' + description)
+            if(description['Body']['Device']) {
+    	
+        log.debug("Did I get here")
 		
         def action = description['Body']['Action'].trim()
         if (action == 4 || action == "4") {
@@ -633,15 +597,13 @@ def parse(description) {
     
     if(description['Body']['Command'])
     	return ""
-        
+
+    
     //Get the zone and light level from the recieved message
      def zone = description['Body']['ZoneStatus']['Zone'].href.substring(6)
      def level = description['Body']['ZoneStatus'].Level
-    
-
-    
-    //Match the zone to a child device and grab its DNI in order to send event to appropriate device
-     children.each { child ->
+     //Match the zone to a child device and grab its DNI in order to send event to appropriate device
+    children.each { child ->
         if (child.getDataValue("zone".toString()) == zone) {
         	dni = child.getDataValue("dni".toString())
      	}
@@ -654,8 +616,85 @@ def parse(description) {
     	sendEvent(dni, [name: "switch", value: "off"])
     }
          
+   
+        
+    }
+    
+    log.debug(description)
+    
+    if (description['device'] && description['level']) {
+    	log.debug  "Got telnet data for update"
+        def device = description['device']
+        def level = description['level'].toInteger()
+        def deviceType
+        
+        children.each { child ->
+        	if (child.getDataValue("deviceID".toString()) == device.toString()) {
+            	log.debug  "Matched"
+        		dni = child.getDataValue("dni".toString())
+                deviceType = child.getDataValue("deviceType".toString())
+     		}	
+        }
+        log.debug dni
+        if (dni != Null) {
+			if (level > 0) { 
+            	log.debug 'level greater than zero event'
+    			sendEvent(dni, [name: "switch", value: "on"])
+        		sendEvent(dni, [name: "level", value: level])
+    		} else {
+            	log.debug 'level off event'
+    			sendEvent(dni, [name: "switch", value: "off"])
+    		}
+        }
+    }
 
-
+    if (description['device'] && description['button']) {
+   		def button = description['button']
+        def device = description['device']
+        def action = description['action']
+   		
+        def deviceType
+        
+        children.each { child ->
+        	if (child.getDataValue("device".toString()) == device.toString()) {
+            	log.debug  "Matched"
+        		dni = child.getDataValue("dni".toString())
+                deviceType = child.getDataValue("deviceType".toString())
+     		}	
+        }
+        log.debug dni
+        if (dni != Null) {
+        	if (deviceType == "Pico3ButtonRaiseLower") {
+            	
+            	
+                switch (button) {
+            	   case "2": button = 1
+                    		break
+                   case "3": button = 3
+                    		break
+                   case "4": button = 2
+                    		break
+                   case "5": button = 4
+                    		break
+                   case "6": button = 5
+                    		break
+                }
+                log.debug "Button ${button} was ${action} on Pico ${device}"
+       	    	//sendEvent(dni, [name: "button", value: "pushed", data: [buttonNumber: button], descriptionText: "button $button was pushed", isStateChange: true])
+                sendEvent(dni, [name: "button", value: action, data: [buttonNumber: button, action: action], descriptionText: "button $button was pushed", isStateChange: true])
+            } else if (deviceType == "Pico2Button") {
+            	if (button == "2") {
+                  button = 1
+                } else {
+                  button = 2
+                }
+                log.debug "Button ${button} was pressed"
+                sendEvent(dni, [name: "button", value: "pushed", data: [buttonNumber: button], descriptionText: "button $button was pushed", isStateChange: true])
+            }
+        }
+        return ""
+    }
+    
 }
 
 //Send request to turn light on (on assumes level of 100)
@@ -675,14 +714,16 @@ def refresh(childDevice) {
 
 //Send request to turn light off (level 0)
 def off(childDevice) {
-    def switches = getSwitches()
-    put("/off", switches[childDevice.device.deviceNetworkId].zone, '0')
+    setLevel(childDevice, 0)
+    //def switches = getSwitches()
+    //put("/off", switches[childDevice.device.deviceNetworkId].zone, '0')
 }
 
 //Send request to set device to a specific level
 def setLevel(childDevice, level) {
+	log.debug('got request to setLevel from childDevice')
     def switches = getSwitches()
-    put("/setLevel", switches[childDevice.device.deviceNetworkId].zone, level)
+    put("/setLevel", switches[childDevice.device.deviceNetworkId].zone, switches[childDevice.device.deviceNetworkId].deviceID, level)
 }
 
 def setLevel(childDevice, level, rampRate) {
@@ -692,12 +733,12 @@ def setLevel(childDevice, level, rampRate) {
 
 def runScene(childDevice) {
 	def scenes = getScenes()
-    def buttonNum = childDevice.device.deviceNetworkId.split("/")[2]
+    def buttonNum = scenes[childDevice.device.deviceNetworkId].virtualButton
     put("/scene", buttonNum)
 }
 
 //Function to send the request to pi
-private put(path, body, level = "", rampRate= "") {
+private put(path, zone, deviceID = "", level = "", rampRate= "") {
     def devices = getDevices()
     def ip
     def port
@@ -706,23 +747,35 @@ private put(path, body, level = "", rampRate= "") {
         port = it.value.port
     }
     def hostHex = ip + ":" + port
-	def content
-    //If no level then this is just a refresh request
-    if (rampRate != "") {
-    	content = body + ":" + level + ":" + rampRate
-    } else if (level != "") {
-    	content = body + ":" + level
+	def content = [:]
+    
+    if (path == '/scene') {
+      content.put('virtualButton', zone)
     } else {
-    	content = body
+        if (rampRate != "") {
+            content.put("zone", zone)
+            content.put("deviceID", deviceID)
+            content.put("level", level.toString())
+            content.put("rampRate", rampRate.toString())
+        } else if (level != "") {
+            content.put("zone", zone)
+            content.put("deviceID", deviceID)
+            content.put("level", level.toString())
+        } else {
+            content.put("zone", zone)
+            content.put("deviceID", deviceID)
+        }
     }
     
+    def headers = [:] 
+	headers.put("HOST", hostHex)
+	headers.put("Content-Type", "application/json")
+    
     def result = new physicalgraph.device.HubAction(
-        method: "GET",
+        method: "POST",
         path: path,
         body: content,
-        headers: [
-            HOST: hostHex
-        ]
+        headers: headers
     )
 
 	sendHubCommand(result)
