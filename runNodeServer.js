@@ -45,5 +45,6 @@ var buttonMethods = [
 	}
 ];
 
-lutronpro.startup(SMARTBRIDGE_IP, SMARTTHINGS_IP, OAUTHCODE, buttonMethods, shortPressTime, intervalTime);
+lutronpro.startup(SMARTBRIDGE_IP, SMARTTHINGS_IP, USER, PW, buttonMethods, shortPressTime, intervalTime);
+
 
