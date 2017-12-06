@@ -25,7 +25,7 @@ metadata {
     }
 
    	tiles(scale: 2) {
-     	multiAttributeTile(name:"mainTile"){
+     	multiAttributeTile(name:"mainTile", type: "lighting"){
 			tileAttribute ("", key: "PRIMARY_CONTROL") {
 	            attributeState "default", label: "Lutron Pi", action: "", icon: "st.Lighting.light99-hue", backgroundColor: "#F3C200"
 			}
